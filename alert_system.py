@@ -98,19 +98,21 @@ class DatabaseTrigger:
             # Get fully qualified table name
             table_name = self.get_table_name()
 
-            # Query for recent updates using PostgreSQL interval
-            # Using parameterized query for table name is not directly possible,
+            # Calculate time window using server time
+            time_threshold = datetime.now() - timedelta(minutes=self.monitor_config['time_window_minutes'])
+
+            # Query for recent updates using server time comparison
             query = f"""
             SELECT id, updated_at, status_id FROM {table_name} 
             WHERE status_id = %s 
             AND api_data_source = 1
-            AND updated_at >= NOW() - INTERVAL '%s minutes'
+            AND updated_at >= %s
             ORDER BY updated_at DESC
             """
 
             cursor.execute(query, (
                 self.monitor_config['status_id'],
-                self.monitor_config['time_window_minutes']
+                time_threshold
             ))
             rows = cursor.fetchall()
 

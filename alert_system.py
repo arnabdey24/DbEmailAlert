@@ -22,6 +22,7 @@ DB_CONFIG = {
     'database': os.getenv('DB_NAME', 'your_database'),
     'user': os.getenv('DB_USER', 'your_username'),
     'password': os.getenv('DB_PASSWORD', 'your_password'),
+    'schema': os.getenv('DB_SCHEMA', 'public'),
     'table_name': os.getenv('DB_TABLE', 'your_table')
 }
 
@@ -61,10 +62,28 @@ class DatabaseTrigger:
                 user=self.db_config['user'],
                 password=self.db_config['password']
             )
+
+            # Set search_path to include the specified schema
+            if self.db_config.get('schema') and self.db_config['schema'] != 'public':
+                with conn.cursor() as cursor:
+                    cursor.execute(f"SET search_path TO {self.db_config['schema']}, public")
+                    conn.commit()
+
             return conn
         except psycopg2.Error as e:
             logging.error(f"PostgreSQL connection error: {e}")
             return None
+
+    def get_table_name(self):
+        """Get fully qualified table name with schema"""
+        schema = self.db_config.get('schema', 'public')
+        table = self.db_config['table_name']
+
+        # If schema is public, we can omit it (optional)
+        if schema == 'public':
+            return table
+        else:
+            return f"{schema}.{table}"
 
     def check_recent_updates(self):
         """Check for rows updated in last specified minutes with target status_id"""
@@ -75,9 +94,13 @@ class DatabaseTrigger:
         try:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+            # Get fully qualified table name
+            table_name = self.get_table_name()
+
             # Query for recent updates using PostgreSQL interval
+            # Using parameterized query for table name is not directly possible,
             query = f"""
-            SELECT id, updated_at, status_id FROM {self.db_config['table_name']} 
+            SELECT id, updated_at, status_id FROM {table_name} 
             WHERE status_id = %s 
             AND api_data_source = 1
             AND updated_at >= NOW() - INTERVAL '%s minutes'
@@ -115,12 +138,13 @@ class DatabaseTrigger:
             msg = MIMEMultipart()
             msg['From'] = email_config['sender_email']
             msg['To'] = email_config['recipient_email']
-            msg[
-                'Subject'] = f"{email_config['subject_prefix']}: {len(rows)} rows with status_id={self.monitor_config['status_id']} detected"
+            msg['Subject'] = f"{email_config['subject_prefix']}: {len(rows)} rows with status_id={self.monitor_config['status_id']} detected"
 
             # Create email body
             body = f"Database Alert Report\n"
             body += f"========================\n\n"
+            body += f"Schema: {self.db_config.get('schema', 'public')}\n"
+            body += f"Table: {self.db_config['table_name']}\n"
             body += f"Found {len(rows)} rows with status_id = {self.monitor_config['status_id']} "
             body += f"updated in the last {self.monitor_config['time_window_minutes']} minutes.\n\n"
             body += f"Details:\n"
@@ -157,8 +181,9 @@ class DatabaseTrigger:
     def console_notification(self, rows):
         """Simple console notification"""
         if rows:
+            schema_table = self.get_table_name()
             print(
-                f"\n🔔 ALERT: Found {len(rows)} rows with status_id={self.monitor_config['status_id']} updated in last {self.monitor_config['time_window_minutes']} minutes:")
+                f"\n🔔 ALERT: Found {len(rows)} rows in {schema_table} with status_id={self.monitor_config['status_id']} updated in last {self.monitor_config['time_window_minutes']} minutes:")
             for row in rows:
                 print(f"  - ID: {row['id']}, Updated: {row['updated_at']}")
                 print(f"    Data: {dict(row)}")

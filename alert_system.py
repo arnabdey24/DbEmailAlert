@@ -33,6 +33,7 @@ EMAIL_CONFIG = {
     'sender_email': os.getenv('SENDER_EMAIL', 'your_email@gmail.com'),
     'sender_password': os.getenv('SENDER_PASSWORD', 'your_app_password'),
     'recipient_email': os.getenv('RECIPIENT_EMAIL', 'recipient@gmail.com'),
+    'cc_email': os.getenv('CC_EMAIL', ''),  # CC support added
     'subject_prefix': os.getenv('EMAIL_SUBJECT_PREFIX', 'Database Alert')
 }
 
@@ -138,6 +139,15 @@ class DatabaseTrigger:
             msg = MIMEMultipart()
             msg['From'] = email_config['sender_email']
             msg['To'] = email_config['recipient_email']
+
+            # Handle multiple CC recipients
+            cc_recipients = []
+            if email_config.get('cc_email'):
+                # Split by comma and clean up whitespace
+                cc_recipients = [email.strip() for email in email_config['cc_email'].split(',') if email.strip()]
+                if cc_recipients:
+                    msg['Cc'] = ', '.join(cc_recipients)
+
             msg['Subject'] = f"{email_config['subject_prefix']}: {len(rows)} rows with status_id={self.monitor_config['status_id']} detected"
 
             # Create email body
@@ -170,10 +180,18 @@ class DatabaseTrigger:
             server.starttls()
             server.login(email_config['sender_email'], email_config['sender_password'])
             text = msg.as_string()
-            server.sendmail(email_config['sender_email'], email_config['recipient_email'], text)
+
+            # Create recipient list including all CC recipients
+            recipients = [email_config['recipient_email']]
+            if cc_recipients:
+                recipients.extend(cc_recipients)
+
+            server.sendmail(email_config['sender_email'], recipients, text)
             server.quit()
 
-            logging.info(f"Email notification sent for {len(rows)} rows to {email_config['recipient_email']}")
+            # Log with CC info
+            cc_info = f" (CC: {', '.join(cc_recipients)})" if cc_recipients else ""
+            logging.info(f"Email notification sent for {len(rows)} rows to {email_config['recipient_email']}{cc_info}")
 
         except Exception as e:
             logging.error(f"Email sending failed: {e}")
